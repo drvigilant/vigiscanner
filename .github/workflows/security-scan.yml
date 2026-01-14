@@ -1,0 +1,238 @@
+name: AI Security Scan
+
+# Trigger on push to main, PRs, and scheduled runs
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      issues: write  # To create issues for findings
+      pull-requests: write  # To comment on PRs
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for better analysis
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run AI Security Scan
+      id: scan
+      run: |
+        python ai_security_scanner.py
+        
+        # Check if findings file was created
+        if [ -f security_findings.json ]; then
+          echo "findings_exist=true" >> $GITHUB_OUTPUT
+          
+          # Count critical and high severity findings
+          CRITICAL=$(jq '[.[] | select(.severity=="CRITICAL")] | length' security_findings.json)
+          HIGH=$(jq '[.[] | select(.severity=="HIGH")] | length' security_findings.json)
+          TOTAL=$(jq 'length' security_findings.json)
+          
+          echo "critical_count=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high_count=$HIGH" >> $GITHUB_OUTPUT
+          echo "total_count=$TOTAL" >> $GITHUB_OUTPUT
+          
+          # Fail if critical issues found
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::Found $CRITICAL critical security issues!"
+            exit 1
+          fi
+        else
+          echo "findings_exist=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Upload scan results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-scan-results
+        path: security_findings.json
+        retention-days: 90
+    
+    - name: Create Issue for Critical Findings
+      if: steps.scan.outputs.critical_count > 0
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const findings = JSON.parse(fs.readFileSync('security_findings.json', 'utf8'));
+          
+          const criticalFindings = findings.filter(f => f.severity === 'CRITICAL');
+          
+          let issueBody = `## 🚨 Critical AI Security Issues Detected
+
+**Scan Date:** ${new Date().toISOString()}
+**Critical Issues:** ${criticalFindings.length}
+
+---
+
+`;
+          
+          criticalFindings.forEach((finding, index) => {
+            issueBody += `### ${index + 1}. ${finding.title}
+
+**File:** \`${finding.file_path}\` (Line ${finding.line_number})
+**Risk Score:** ${finding.risk_score}/100
+**Asset Type:** ${finding.asset_type}
+
+**Description:** ${finding.description}
+
+**Recommendation:**
+${finding.recommendation}
+
+---
+
+`;
+          });
+          
+          issueBody += `
+## Next Steps
+1. Review each finding above
+2. Remove exposed credentials
+3. Move secrets to environment variables or secure vaults
+4. Add affected files to .gitignore if necessary
+5. Rotate any exposed API keys immediately
+
+**🔗 View full report in the workflow artifacts**
+`;
+          
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `🔐 Critical AI Security Issues Found (${criticalFindings.length})`,
+            body: issueBody,
+            labels: ['security', 'critical', 'ai-security']
+          });
+    
+    - name: Comment on PR
+      if: github.event_name == 'pull_request' && steps.scan.outputs.findings_exist == 'true'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const critical = '${{ steps.scan.outputs.critical_count }}';
+          const high = '${{ steps.scan.outputs.high_count }}';
+          const total = '${{ steps.scan.outputs.total_count }}';
+          
+          let emoji = '✅';
+          let message = 'No critical security issues found!';
+          
+          if (critical > 0) {
+            emoji = '🚨';
+            message = `Found ${critical} CRITICAL and ${high} HIGH severity issues!`;
+          } else if (high > 0) {
+            emoji = '⚠️';
+            message = `Found ${high} HIGH severity issues.`;
+          }
+          
+          const comment = `## ${emoji} AI Security Scan Results
+
+${message}
+
+**Summary:**
+- Total Findings: ${total}
+- Critical: ${critical}
+- High: ${high}
+
+${critical > 0 ? '**❌ This PR introduces critical security issues and cannot be merged.**' : ''}
+
+<details>
+<summary>View Details</summary>
+
+Download the full report from the workflow artifacts.
+
+**Common Issues to Check:**
+- [ ] No API keys in code
+- [ ] Secrets in environment variables
+- [ ] .env files in .gitignore
+- [ ] Proper authentication on endpoints
+- [ ] Input validation for prompts
+
+</details>
+
+---
+*Scanned by AI Security Posture Scanner*
+`;
+          
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: comment
+          });
+    
+    - name: Generate Summary
+      if: always()
+      run: |
+        echo "## 🔐 AI Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f security_findings.json ]; then
+          CRITICAL=$(jq '[.[] | select(.severity=="CRITICAL")] | length' security_findings.json)
+          HIGH=$(jq '[.[] | select(.severity=="HIGH")] | length' security_findings.json)
+          MEDIUM=$(jq '[.[] | select(.severity=="MEDIUM")] | length' security_findings.json)
+          LOW=$(jq '[.[] | select(.severity=="LOW")] | length' security_findings.json)
+          TOTAL=$(jq 'length' security_findings.json)
+          
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚨 Critical | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚠️  High | $HIGH |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚡ Medium | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+          echo "| ℹ️  Low | $LOW |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **$TOTAL** |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "✅ No security issues found!" >> $GITHUB_STEP_SUMMARY
+        fi
+
+  # Optional: Deploy dashboard to GitHub Pages
+  deploy-dashboard:
+    needs: security-scan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+    
+    - name: Generate static dashboard
+      run: |
+        # Generate HTML report (if implemented)
+        python generate_html_report.py
+    
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./reports

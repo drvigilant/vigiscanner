@@ -1,0 +1,29 @@
+# Core Dependencies
+streamlit>=1.28.0
+pandas>=2.0.0
+plotly>=5.17.0
+
+# File and Path Management
+pathlib2>=2.3.7
+
+# Git Integration (Optional - for GitHub repo scanning)
+GitPython>=3.1.40
+
+# Environment Management
+python-dotenv>=1.0.0
+
+# API Validation (Optional - for endpoint checking)
+requests>=2.31.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Code Quality
+black>=23.0.0
+flake8>=6.1.0
+mypy>=1.5.0
+
+# Documentation
+mkdocs>=1.5.0
+mkdocs-material>=9.4.0
