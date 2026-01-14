@@ -18,13 +18,15 @@ It also scores each finding based on how risky it is (where the file is, what ty
 
 ```bash
 pip install -r requirements.txt
-python ai_security_scanner.py
+python3 ai_security_scanner.py
 ```
 
 Want a dashboard? Run:
 ```bash
 streamlit run streamlit_dashboard.py
 ```
+
+Open your browser to `http://localhost:8501`
 
 ## Usage
 
@@ -37,6 +39,11 @@ findings = scanner.scan_directory(".")
 stats = scanner.get_statistics()
 
 print(f"Found {stats['total_findings']} potential issues")
+```
+
+Or just run it directly:
+```bash
+python3 ai_security_scanner.py
 ```
 
 Export results:
